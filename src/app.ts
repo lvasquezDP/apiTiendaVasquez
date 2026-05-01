@@ -10,6 +10,6 @@ app.use("/product", productRouter);
 app.use("/sale", saleRouter);
 app.use("/report", reportRouter);
 
-app.listen(3000, () => {
-  console.log("Servidor en http://localhost:3000");
+app.listen(3000, "0.0.0.0", () => {
+  console.log("Servidor corriendo en red");
 });
