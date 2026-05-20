@@ -102,20 +102,49 @@ saleRouter.get("/ticket/:id", async (req, res) => {
   return responseSuccess(res, ticket, "TICKET_GENERATED");
 });
 
-saleRouter.get("/", async (_req, res) => {
+saleRouter.get("/search", async (req, res) => {
+  const { startDate, endDate, minTotal, maxTotal, cursorId, cursorDate, limit } = req.query;
+  const PAGE_SIZE = limit ? Number(limit) : 10;
   const sales = await prisma.sale.findMany({
-    include: {
-      items: {
-        include: {
-          product: true
+    take: PAGE_SIZE + 1,
+    ...(cursorId && cursorDate ? {
+      cursor: { id: cursorId as string },
+      skip: 1,
+    } : {}),
+    where: {
+      ...(startDate || endDate ? {
+        createdAt: {
+          ...(startDate ? { gte: new Date(startDate as string) } : {}),
+          ...(endDate ? { lte: new Date(endDate as string) } : {}),
         }
-      }
-    },
-    orderBy: {
-      createdAt: "desc"
-    }
-  });
+      } : {}),
 
-  return responseSuccess(res, sales, "SALES_FOUND");
+      ...(minTotal || maxTotal ? {
+        total: {
+          ...(minTotal ? { gte: Number(minTotal) } : {}),
+          ...(maxTotal ? { lte: Number(maxTotal) } : {}),
+        }
+      } : {})
+    },
+    // include: {
+    //   items: {
+    //     include: {
+    //       product: true
+    //     }
+    //   }
+    // },
+    orderBy: [
+      { createdAt: "desc" },
+      { id: "desc" }
+    ]
+  });
+  const hasMore = sales.length > PAGE_SIZE;
+  const data = hasMore ? sales.slice(0, PAGE_SIZE) : sales;
+  const lastItem = data.length > 0 ? data[data.length - 1] : null;
+  const nextCursor = hasMore && lastItem ? {
+    cursorId: lastItem.id,
+    cursorDate: lastItem.createdAt.toISOString()
+  } : null;
+  return responseSuccess(res, data, "SALES_FOUND", { nextCursor, hasMore });
 });
 export default saleRouter;

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { productSchema } from "../schemas/product.schema";
 import prisma from "../data";
 import { responseSuccess, responseError } from "../utils/response";
+import { ProductType } from "../generated/prisma/enums";
 
 const productRouter = Router();
 
@@ -38,7 +39,7 @@ productRouter.get("/", async (req, res) => {
 });
 
 productRouter.get("/search", async (req, res) => {
-  const { supplierId, minPrice, maxPrice, cursor, limit, name } = req.query;
+  const { supplierId, minPrice, maxPrice, cursor, limit, name, type } = req.query;
   const PAGE_SIZE = limit ? Number(limit) : 10;
   const products = await prisma.product.findMany({
     take: PAGE_SIZE + 1,
@@ -47,15 +48,21 @@ productRouter.get("/search", async (req, res) => {
       skip: 1, // Saltamos el cursor en sí para no repetir el último producto
     } : {}),
     where: {
-      ...supplierId && { supplierId: supplierId as string | null },
-      price: {
-        ...maxPrice ? { lte: Number(maxPrice) } : {},
-        ...minPrice ? { gte: Number(minPrice) } : {}
-      },
+      ...(supplierId ? { supplierId: supplierId as string } : {}),
+      ...(minPrice || maxPrice ? {
+        price: {
+          ...(minPrice ? { gte: Number(minPrice) } : {}),
+          ...(maxPrice ? { lte: Number(maxPrice) } : {}),
+        }
+      } : {}),
       ...(name ? {
         name: {
-          contains: String(name)
+          contains: String(name),
+          mode: "insensitive",
         }
+      } : {}),
+      ...(type ? {
+        type: type as ProductType
       } : {}),
     },
     include: {
