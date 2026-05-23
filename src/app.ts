@@ -1,18 +1,11 @@
-import express from "express";
-import cors from "cors";
-import productRouter from "./router/product.routes";
-import saleRouter from "./router/sale.routes";
-import reportRouter from "./router/report.routes";
+import { AppRoutes } from "./router";
+import { Server } from "./server";
 
-const app = express();
-app.use(cors({
-  origin: "*",
-}));
-app.use(express.json());
-app.use("/product", productRouter);
-app.use("/sale", saleRouter);
-app.use("/report", reportRouter);
+(async () => { main(); })();
 
-app.listen(3000, "0.0.0.0", () => {
-  console.log("Servidor corriendo en red");
-});
+async function main() {
+  const server = new Server(3000);
+
+  server.setRoutes(AppRoutes.routes);
+  server.start();
+}

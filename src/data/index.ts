@@ -10,6 +10,14 @@ const prisma = new PrismaClient({
   }))
 }).$extends({
   result: {
-  },
+    supplier: {
+      photo: {
+        compute: (supplier) => {
+          if (!supplier.photo) return null;
+          return `${process.env["UPLOAD_URL"]}${supplier.photo}`;
+        }
+      }
+    }
+  }
 });
 export default prisma;

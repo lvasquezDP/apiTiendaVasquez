@@ -17,6 +17,8 @@ model Product {
   code      String   @unique
   name      String
   price     Float    // precio por unidad o por gramo
+  realName  String?
+  realPrice Float?
   type      ProductType
   stock     Float    // piezas o gramos disponibles
   createdAt DateTime @default(now())
@@ -30,12 +32,18 @@ enum ProductType {
   UNIT   // pieza
   WEIGHT // gramos
 }
+enum PaymentMethod {
+  CARD
+  CASH
+}
 
 model Sale {
-  id        String     @id @default(cuid())
-  total     Float
-  createdAt DateTime   @default(now())
-  items     SaleItem[]
+  id            String     @id @default(cuid())
+  total         Float
+  extra         Float
+  paymentMethod PaymentMethod @default(CASH)
+  createdAt     DateTime   @default(now())
+  items         SaleItem[]
 }
 
 model SaleItem {
@@ -53,6 +61,7 @@ model SaleItem {
 model Supplier {
   id        String   @id @default(cuid())
   name      String
+  photo     String?
   createdAt DateTime @default(now())
 
   products  Product[]

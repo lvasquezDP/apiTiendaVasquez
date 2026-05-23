@@ -12,12 +12,39 @@ productRouter.post("/", async (req, res) => {
   if (!result.success) {
     return responseError(res, 400, "DATA_INVALID", result.error);
   }
+  try {
 
-  const product = await prisma.product.create({
-    data: result.data
-  });
+    const product = await prisma.product.create({
+      data: result.data
+    });
 
-  return responseSuccess(res, product, "PRODUCT_CREATED");
+    return responseSuccess(res, product, "PRODUCT_CREATED");
+  } catch (error: any) {
+    return responseError(res, 400, error.message || "COULD_NOT_UPDATE_PRODUCT");
+  }
+});
+productRouter.put("/:id", async (req, res) => {
+  const { id } = req.params as { id: string };
+
+  const result = productSchema.safeParse(req.body);
+
+  if (!result.success) {
+    return res.status(400).json(result.error);
+  }
+
+  try {
+    const exists = await prisma.product.findUnique({ where: { id } });
+    if (!exists) return responseError(res, 404, "PRODUCT_NOT_FOUND");
+
+    const updatedSupplier = await prisma.product.update({
+      where: { id },
+      data: result.data
+    });
+
+    return responseSuccess(res, updatedSupplier, "PRODUCT_UPDATED");
+  } catch (error: any) {
+    return responseError(res, 400, error.message || "COULD_NOT_UPDATE_PRODUCT");
+  }
 });
 
 productRouter.get("/", async (req, res) => {

@@ -12,7 +12,7 @@ saleRouter.post("/", async (req, res) => {
     return res.status(400).json(result.error);
   }
 
-  const { items } = result.data;
+  const { items, extra } = result.data;
 
   try {
     const sale = await prisma.$transaction(async (tx) => {
@@ -27,9 +27,9 @@ saleRouter.post("/", async (req, res) => {
 
         if (!product) throw new Error("PRODUCT_NOT_FOUND");
 
-        if (product.stock < item.quantity) {
-          throw new Error(`Stock insuficiente para ${product.name}`);
-        }
+        // if (product.stock < item.quantity) {
+        //   throw new Error(`Stock insuficiente para ${product.name}`);
+        // }
 
         const subtotal = product.price * item.quantity;
 
@@ -43,22 +43,22 @@ saleRouter.post("/", async (req, res) => {
         });
 
         // actualizar stock
-        await tx.product.update({
-          where: { id: product.id },
-          data: {
-            stock: product.stock - item.quantity
-          }
-        });
+        // await tx.product.update({
+        //   where: { id: product.id },
+        //   data: {
+        //     stock: product.stock - item.quantity
+        //   }
+        // });
       }
 
       return await tx.sale.create({
         data: {
           total,
+          extra,
           items: {
             create: saleItemsData
           }
-        },
-        include: { items: true }
+        }
       });
     });
 
@@ -106,7 +106,7 @@ saleRouter.get("/search", async (req, res) => {
   const { startDate, endDate, minTotal, maxTotal, cursorId, cursorDate, limit } = req.query;
   const PAGE_SIZE = limit ? Number(limit) : 10;
   const sales = await prisma.sale.findMany({
-    take: PAGE_SIZE + 1,
+    take: PAGE_SIZE + 5,
     ...(cursorId && cursorDate ? {
       cursor: { id: cursorId as string },
       skip: 1,
@@ -119,12 +119,12 @@ saleRouter.get("/search", async (req, res) => {
         }
       } : {}),
 
-      ...(minTotal || maxTotal ? {
-        total: {
-          ...(minTotal ? { gte: Number(minTotal) } : {}),
-          ...(maxTotal ? { lte: Number(maxTotal) } : {}),
-        }
-      } : {})
+      // ...(minTotal || maxTotal ? {
+      //   total: {
+      //     ...(minTotal ? { gte: Number(minTotal) } : {}),
+      //     ...(maxTotal ? { lte: Number(maxTotal) } : {}),
+      //   }
+      // } : {})
     },
     // include: {
     //   items: {
@@ -138,8 +138,18 @@ saleRouter.get("/search", async (req, res) => {
       { id: "desc" }
     ]
   });
-  const hasMore = sales.length > PAGE_SIZE;
-  const data = hasMore ? sales.slice(0, PAGE_SIZE) : sales;
+
+  const filteredSales = sales.filter(sale => {
+    const rangoVenta = sale.total + sale.extra;
+
+    const cumpleMin = minTotal ? rangoVenta >= Number(minTotal) : true;
+    const cumpleMax = maxTotal ? rangoVenta <= Number(maxTotal) : true;
+
+    return cumpleMin && cumpleMax;
+  }).slice(0, PAGE_SIZE + 1)
+
+  const hasMore = filteredSales.length > PAGE_SIZE;
+  const data = hasMore ? filteredSales.slice(0, PAGE_SIZE) : filteredSales;
   const lastItem = data.length > 0 ? data[data.length - 1] : null;
   const nextCursor = hasMore && lastItem ? {
     cursorId: lastItem.id,
