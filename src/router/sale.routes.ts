@@ -12,7 +12,7 @@ saleRouter.post("/", async (req, res) => {
     return res.status(400).json(result.error);
   }
 
-  const { items, extra } = result.data;
+  const { items, extra, comision } = result.data;
 
   try {
     const sale = await prisma.$transaction(async (tx) => {
@@ -55,6 +55,7 @@ saleRouter.post("/", async (req, res) => {
         data: {
           total,
           extra,
+          comision,
           items: {
             create: saleItemsData
           }
@@ -89,14 +90,18 @@ saleRouter.get("/ticket/:id", async (req, res) => {
 
   const ticket = {
     id: sale.id,
-    fecha: sale.createdAt,
+    createdAt: sale.createdAt,
     items: sale.items.map(item => ({
-      producto: item.product.name,
-      cantidad: item.quantity,
-      precio: item.price,
+      name: item.product.name,
+      quantity: item.quantity,
+      price: item.price,
       subtotal: item.subtotal
     })),
-    total: sale.total
+    total: sale.total,
+    comision: sale.comision,
+    extra: sale.extra,
+    paymentMethod: sale.paymentMethod,
+
   };
 
   return responseSuccess(res, ticket, "TICKET_GENERATED");

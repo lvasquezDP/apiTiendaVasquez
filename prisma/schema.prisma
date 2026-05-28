@@ -41,6 +41,7 @@ model Sale {
   id            String     @id @default(cuid())
   total         Float
   extra         Float
+  comision      Float
   paymentMethod PaymentMethod @default(CASH)
   createdAt     DateTime   @default(now())
   items         SaleItem[]

@@ -45,7 +45,7 @@ reportRouter.get("/dashboard", async (req, res) => {
 
   const dailySales: Array<{ date: Date; count: number; total: number }> =
     await prisma.$queryRaw`
-      SELECT DATE("createdAt") as date, COUNT(*)::int as count, SUM(total) as total
+      SELECT DATE("createdAt") as date, COUNT(*)::int as count, SUM(total) as total, SUM(extra) as extra, SUM(comision) as comision
       FROM "Sale"
       WHERE "createdAt" >= ${start} AND "createdAt" <= ${end}
       GROUP BY DATE("createdAt")
