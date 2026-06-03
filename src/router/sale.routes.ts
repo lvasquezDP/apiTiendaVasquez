@@ -31,7 +31,7 @@ saleRouter.post("/", async (req, res) => {
         //   throw new Error(`Stock insuficiente para ${product.name}`);
         // }
 
-        const subtotal = product.price * item.quantity;
+        const subtotal = (product.type === "WEIGHT" ? (product.price * item.quantity) / 1000 : product.price * item.quantity);
 
         total += subtotal;
 
