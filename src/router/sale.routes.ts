@@ -2,6 +2,7 @@ import { Router } from "express";
 import { saleSchema } from "../schemas/sale.schema";
 import prisma from "../data";
 import { responseError, responseSuccess } from "../utils/response";
+import { DateTime } from "luxon";
 
 const saleRouter = Router();
 
@@ -108,19 +109,25 @@ saleRouter.get("/ticket/:id", async (req, res) => {
 });
 
 saleRouter.get("/search", async (req, res) => {
-  const { startDate, endDate, minTotal, maxTotal, cursorId, cursorDate, limit } = req.query;
+  const { startDate, endDate, minTotal, maxTotal, cursor, limit } = req.query;
+  const TIMEZONE = "America/Mexico_City";
+
   const PAGE_SIZE = limit ? Number(limit) : 10;
   const sales = await prisma.sale.findMany({
     take: PAGE_SIZE + 5,
-    ...(cursorId && cursorDate ? {
-      cursor: { id: cursorId as string },
+    ...(cursor ? {
+      cursor: { id: cursor as string },
       skip: 1,
     } : {}),
     where: {
       ...(startDate || endDate ? {
         createdAt: {
-          ...(startDate ? { gte: new Date(startDate as string) } : {}),
-          ...(endDate ? { lte: new Date(endDate as string) } : {}),
+          ...(startDate ? {
+            gte: DateTime.fromISO(startDate as string, { zone: TIMEZONE }).startOf("day").toUTC().toJSDate()
+          } : {}),
+          ...(endDate ? {
+            lte: DateTime.fromISO(endDate as string, { zone: TIMEZONE }).endOf("day").toUTC().toJSDate()
+          } : {}),
         }
       } : {}),
 
@@ -155,11 +162,7 @@ saleRouter.get("/search", async (req, res) => {
 
   const hasMore = filteredSales.length > PAGE_SIZE;
   const data = hasMore ? filteredSales.slice(0, PAGE_SIZE) : filteredSales;
-  const lastItem = data.length > 0 ? data[data.length - 1] : null;
-  const nextCursor = hasMore && lastItem ? {
-    cursorId: lastItem.id,
-    cursorDate: lastItem.createdAt.toISOString()
-  } : null;
+  const nextCursor = hasMore && data.length > 0 ? data[data.length - 1]?.id : null;
   return responseSuccess(res, data, "SALES_FOUND", { nextCursor, hasMore });
 });
 export default saleRouter;

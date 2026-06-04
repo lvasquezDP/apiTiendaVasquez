@@ -1,11 +1,22 @@
 import { Router } from "express";
 import prisma from "../data";
 import { responseSuccess } from "../utils/response";
+import { DateTime } from "luxon";
 
 const reportRouter = Router();
 
 reportRouter.get("/dashboard", async (req, res) => {
   const { startDate, endDate } = req.query;
+
+  const TIMEZONE = "America/Mexico_City";
+
+  const start = DateTime.fromISO(startDate as string, {
+    zone: TIMEZONE
+  }).startOf("day").toUTC().toJSDate();
+
+  const end = DateTime.fromISO(endDate as string, {
+    zone: TIMEZONE
+  }).endOf("day").toUTC().toJSDate();
 
   if (!startDate || !endDate) {
     return res.status(400).json({
@@ -14,9 +25,6 @@ reportRouter.get("/dashboard", async (req, res) => {
       data: null
     });
   }
-
-  const start = new Date(startDate as string);
-  const end = new Date(endDate as string);
 
   console.log(req.query);
   console.log(startDate, endDate);
@@ -42,13 +50,14 @@ reportRouter.get("/dashboard", async (req, res) => {
     _count: true,
     where: whereDate
   });
-
   const dailySales: Array<{ date: Date; count: number; total: number }> =
     await prisma.$queryRaw`
-      SELECT DATE("createdAt") as date, COUNT(*)::int as count, SUM(total) as total, SUM(extra) as extra, SUM(comision) as comision
+      SELECT
+      TO_CHAR(("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${TIMEZONE}), 'YYYY-MM-DD') as date,
+      COUNT(*)::int as count, SUM(total) as total, SUM(extra) as extra, SUM(comision) as comision
       FROM "Sale"
       WHERE "createdAt" >= ${start} AND "createdAt" <= ${end}
-      GROUP BY DATE("createdAt")
+      GROUP BY 1
       ORDER BY date ASC
     `;
 
