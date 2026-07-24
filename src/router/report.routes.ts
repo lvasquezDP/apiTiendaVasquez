@@ -2,11 +2,17 @@ import { Router } from "express";
 import prisma from "../data";
 import { responseSuccess } from "../utils/response";
 import { DateTime } from "luxon";
+import { Prisma } from "../generated/prisma/client";
 
 const reportRouter = Router();
 
 reportRouter.get("/dashboard", async (req, res) => {
   const { startDate, endDate } = req.query;
+
+  const supplierId =
+    typeof req.query.supplierId === "string"
+      ? req.query.supplierId
+      : undefined;
 
   const TIMEZONE = "America/Mexico_City";
 
@@ -26,8 +32,6 @@ reportRouter.get("/dashboard", async (req, res) => {
     });
   }
 
-  console.log(req.query);
-  console.log(startDate, endDate);
   if (isNaN(start.getTime()) || isNaN(end.getTime())) {
     return res.status(400).json({
       message: "Fechas inválidas",
@@ -38,39 +42,134 @@ reportRouter.get("/dashboard", async (req, res) => {
     createdAt: { gte: start, lte: end }
   };
 
-  const salesAgg = await prisma.sale.aggregate({
-    _sum: { total: true, extra: true },
-    _count: true,
-    where: whereDate
-  });
+  // Ventas que incluyen al menos un item de ese proveedor
+  const whereSale = {
+    ...whereDate,
+    ...(supplierId
+      ? { items: { some: { product: { supplierId } } } }
+      : {})
+  };
 
-  const salesByPayment = await prisma.sale.groupBy({
-    by: ["paymentMethod"],
-    _sum: { total: true },
-    _count: true,
-    where: whereDate
-  });
-  const dailySales: Array<{ date: Date; count: number; total: number }> =
-    await prisma.$queryRaw`
-      SELECT
-      TO_CHAR(("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${TIMEZONE}), 'YYYY-MM-DD') as date,
-      COUNT(*)::int as count, SUM(total) as total, SUM(extra) as extra, SUM(comision) as comision
-      FROM "Sale"
-      WHERE "createdAt" >= ${start} AND "createdAt" <= ${end}
-      GROUP BY 1
-      ORDER BY date ASC
-    `;
+  // ---------- Totales de ventas ----------
+  // Sin supplierId: total real de la venta.
+  // Con supplierId: total prorrateado = suma de subtotal de items de ese proveedor.
+  let salesTotal = 0;
+  let salesExtra = 0;
+  let salesCount = 0;
 
+  if (supplierId) {
+    const [proratedAgg, saleCount] = await Promise.all([
+      prisma.saleItem.aggregate({
+        _sum: { subtotal: true },
+        where: { product: { supplierId }, sale: whereDate }
+      }),
+      prisma.sale.count({ where: whereSale })
+    ]);
+    salesTotal = proratedAgg._sum.subtotal ?? 0;
+    salesCount = saleCount;
+    salesExtra = 0; // "extra" es a nivel de venta completa, no se puede prorratear por producto
+  } else {
+    const agg = await prisma.sale.aggregate({
+      _sum: { total: true, extra: true },
+      _count: true,
+      where: whereDate
+    });
+    salesTotal = agg._sum.total ?? 0;
+    salesExtra = agg._sum.extra ?? 0;
+    salesCount = agg._count;
+  }
+
+  // ---------- Ventas por método de pago ----------
+  let salesByPayment: { method: string; count: number; total: number }[];
+
+  if (supplierId) {
+    const items = await prisma.saleItem.findMany({
+      where: { product: { supplierId }, sale: whereDate },
+      select: {
+        subtotal: true,
+        sale: { select: { id: true, paymentMethod: true } }
+      }
+    });
+
+    const groups = new Map<string, { total: number; saleIds: Set<string> }>();
+    for (const item of items) {
+      const method = item.sale.paymentMethod;
+      if (!groups.has(method)) {
+        groups.set(method, { total: 0, saleIds: new Set() });
+      }
+      const g = groups.get(method)!;
+      g.total += item.subtotal;
+      g.saleIds.add(item.sale.id);
+    }
+
+    salesByPayment = Array.from(groups.entries()).map(([method, g]) => ({
+      method,
+      count: g.saleIds.size,
+      total: g.total
+    }));
+  } else {
+    const grouped = await prisma.sale.groupBy({
+      by: ["paymentMethod"],
+      _sum: { total: true },
+      _count: true,
+      where: whereDate
+    });
+    salesByPayment = grouped.map(p => ({
+      method: p.paymentMethod,
+      count: p._count,
+      total: p._sum.total ?? 0
+    }));
+  }
+
+  // ---------- Desglose diario ----------
+  const supplierFilter = supplierId
+    ? Prisma.sql`AND p."supplierId" = ${supplierId}`
+    : Prisma.empty;
+
+  const dailySales: Array<{ date: string; count: number; total: number; extra: number; comision: number }> = supplierId
+    ? await prisma.$queryRaw`
+        SELECT
+          TO_CHAR((s."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${TIMEZONE}), 'YYYY-MM-DD') as date,
+          COUNT(DISTINCT s.id)::int as count,
+          SUM(si.subtotal) as total,
+          0 as extra,
+          0 as comision
+        FROM "Sale" s
+        JOIN "SaleItem" si ON si."saleId" = s.id
+        JOIN "Product" p ON p.id = si."productId"
+        WHERE s."createdAt" >= ${start} AND s."createdAt" <= ${end}
+        ${supplierFilter}
+        GROUP BY 1
+        ORDER BY date ASC
+      `
+    : await prisma.$queryRaw`
+        SELECT
+          TO_CHAR((s."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${TIMEZONE}), 'YYYY-MM-DD') as date,
+          COUNT(s.*)::int as count,
+          SUM(s.total) as total,
+          SUM(s.extra) as extra,
+          SUM(s.comision) as comision
+        FROM "Sale" s
+        WHERE s."createdAt" >= ${start} AND s."createdAt" <= ${end}
+        GROUP BY 1
+        ORDER BY date ASC
+      `;
+
+  // ---------- Resto de métricas (ya eran a nivel de item/producto, no requieren prorrateo) ----------
   const productsSoldAgg = await prisma.saleItem.count({
-    where: { sale: whereDate }
+    where: {
+      sale: whereDate,
+      ...(supplierId ? { product: { supplierId } } : {})
+    }
   });
 
   const lastSales = await prisma.sale.findMany({
-    where: whereDate,
+    where: whereSale,
     orderBy: { createdAt: "desc" },
     take: 5,
     include: {
       items: {
+        where: supplierId ? { product: { supplierId } } : {},
         include: { product: { select: { name: true } } }
       }
     }
@@ -79,7 +178,10 @@ reportRouter.get("/dashboard", async (req, res) => {
   const topProductsRaw = await prisma.saleItem.groupBy({
     by: ["productId"],
     _sum: { quantity: true, subtotal: true },
-    where: { sale: whereDate },
+    where: {
+      sale: whereDate,
+      ...(supplierId ? { product: { supplierId } } : {})
+    },
     orderBy: { _sum: { quantity: "desc" } },
     take: 5
   });
@@ -100,7 +202,10 @@ reportRouter.get("/dashboard", async (req, res) => {
   }));
 
   const lowStock = await prisma.product.findMany({
-    where: { stock: { lte: 5 } },
+    where: {
+      stock: { lte: 5 },
+      ...(supplierId ? { supplierId } : {})
+    },
     orderBy: { stock: "asc" },
     take: 10,
     select: { id: true, name: true, stock: true, type: true }
@@ -108,7 +213,8 @@ reportRouter.get("/dashboard", async (req, res) => {
 
   const productsByType = await prisma.product.groupBy({
     by: ["type"],
-    _count: true
+    _count: true,
+    where: supplierId ? { supplierId } : {}
   });
 
   const totalSuppliers = await prisma.supplier.count();
@@ -118,15 +224,15 @@ reportRouter.get("/dashboard", async (req, res) => {
 
   return responseSuccess(res, {
     sales: {
-      total: salesAgg._sum.total ?? 0,
-      count: salesAgg._count,
-      extra: salesAgg._sum.extra ?? 0,
-      average: salesAgg._count > 0 ? (salesAgg._sum.total ?? 0) / salesAgg._count : 0,
+      total: salesTotal,
+      count: salesCount,
+      extra: salesExtra,
+      average: salesCount > 0 ? salesTotal / salesCount : 0,
       totalProductsSold: productsSoldAgg ?? 0,
       lastSales: lastSales.map(s => ({
         id: s.id,
         total: s.total,
-        extra: s.extra,
+        extra: supplierId ? 0 : s.extra,
         paymentMethod: s.paymentMethod,
         createdAt: s.createdAt,
         items: s.items.map(i => ({
@@ -136,11 +242,7 @@ reportRouter.get("/dashboard", async (req, res) => {
           subtotal: i.subtotal
         }))
       })),
-      byPaymentMethod: salesByPayment.map(p => ({
-        method: p.paymentMethod,
-        count: p._count,
-        total: p._sum.total ?? 0
-      })),
+      byPaymentMethod: salesByPayment,
       dailyBreakdown: dailySales
     },
     products: {
